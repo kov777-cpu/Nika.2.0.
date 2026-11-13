@@ -1,0 +1,66 @@
+[tool.briefcase]
+project_name = "Nika"
+bundle = "org.nikaassistant"
+version = "2.2.0"
+url = "https://github.com/nika-assistant"
+license.file = "LICENSE"
+author = "Nika"
+author_email = "nika@example.invalid"
+
+[tool.briefcase.app.nika]
+formal_name = "Nika"
+description = "Голосовой ассистент: звонки, приложения, таймеры, вайфай и живой разговор"
+long_description = """
+Nika — голосовой ассистент для телефона на BeeWare (Toga + Briefcase).
+
+Умеет: «позвони маме» (контакты и падежи), «открой ютуб» (приложения и сайты),
+«засеки 10 минут», «будильник на 7:30», «напомни через час», «какой пароль
+от вайфая», «погода в москве», заметки, память о человеке и просто разговор.
+"""
+icon = "resources/icon"
+sources = ["nika"]
+test_sources = ["tests"]
+requires = ["toga"]
+
+[tool.briefcase.app.nika.android]
+requires = ["toga-android", "certifi"]
+
+# тёмная тема вместо зелёной системной шапки и статус-бара
+base_theme = "Theme.AppCompat.NoActionBar"
+primary_color = "#0d0d0f"
+primary_color_dark = "#0d0d0f"
+accent_color = "#c81e3a"
+splash_background_color = "#0d0d0f"
+
+# клавиатура поджимает окно: строка ввода остаётся над ней
+android_manifest_activity_attrs_extra_content = 'android:windowSoftInputMode="adjustResize"'
+
+# В Briefcase 0.3.2x permission — это словарь: имя разрешения -> атрибуты.
+# INTERNET и ACCESS_NETWORK_STATE добавляются автоматически.
+[tool.briefcase.app.nika.android.permission]
+"android.permission.ACCESS_WIFI_STATE" = {}
+"android.permission.CHANGE_WIFI_STATE" = {}
+"android.permission.ACCESS_FINE_LOCATION" = {}
+"android.permission.ACCESS_COARSE_LOCATION" = {}
+"android.permission.CALL_PHONE" = {}
+"android.permission.READ_CONTACTS" = {}
+"android.permission.SEND_SMS" = {}
+"android.permission.RECORD_AUDIO" = {}
+"android.permission.CAMERA" = {}
+"android.permission.POST_NOTIFICATIONS" = {}
+"android.permission.VIBRATE" = {}
+"android.permission.QUERY_ALL_PACKAGES" = {}
+"android.permission.FOREGROUND_SERVICE" = {}
+
+[tool.briefcase.app.nika.windows]
+requires = ["toga-winforms"]
+
+[tool.briefcase.app.nika.macOS]
+requires = ["toga-cocoa"]
+
+[tool.briefcase.app.nika.linux]
+requires = ["toga-gtk"]
+
+[tool.briefcase.app.nika.iOS]
+requires = ["toga-iOS"]
+
