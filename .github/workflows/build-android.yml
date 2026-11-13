@@ -1,0 +1,61 @@
+name: Build Nika APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Briefcase
+        run: |
+          python -m pip install -U pip setuptools wheel
+          python -m pip install briefcase
+
+      - name: Setup Java 17
+        run: |
+          # Официальный подход BeeWare: использовать предустановленный JDK 17 из GitHub
+          echo "JAVA_HOME=${JAVA_HOME_17_X64:-$JAVA_HOME_17_arm64}" >> $GITHUB_ENV
+          echo "JAVA_HOME=$JAVA_HOME"
+
+      - name: Ensure LICENSE exists
+        run: |
+          # Briefcase требует файл лицензии, если он указан в pyproject.toml
+          if [ ! -f LICENSE ]; then
+            echo "MIT License" > LICENSE
+            echo "Copyright (c) 2026 Nika" >> LICENSE
+            echo "Создан минимальный LICENSE файл для Briefcase."
+          fi
+
+      - name: Create Android project
+        run: briefcase create android --no-input
+
+      - name: Build Android APK
+        run: briefcase build android --no-input
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nika-apk
+          path: build/nika/android/gradle/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: briefcase-logs
+          path: logs/*
+          if-no-files-found: ignore
