@@ -22,7 +22,7 @@ import traceback
 import toga
 from toga.style import Pack
 
-from . import Engine, Reply, Store, nlp, theme
+from . import Engine, Reply, Store, __version__, nlp, theme
 from .bridge import get_bridge
 
 # Полоса «волн» голосового ввода: высота и частота кадров.
@@ -143,7 +143,7 @@ class NikaApp(toga.App):
         """Тост на экране: если приложение упадёт, видно, до какого шага дошло."""
         self._log("stage: " + text)
         try:
-            self.bridge.toast("Nika: " + text)
+            self.bridge.toast("Nika %s: %s" % (__version__, text))
         except BaseException:
             pass
 
@@ -280,7 +280,7 @@ class NikaApp(toga.App):
             box = toga.Box(style=_pack(direction="column",
                                        background_color=theme.BG, padding=12))
             box.add(toga.Label(
-                "запуск не удался",
+                "запуск не удался (Nika %s)" % __version__,
                 style=_pack(color=theme.ACCENT, font_size=18, font_weight="bold")))
             box.add(toga.Label(
                 details[-1100:],
