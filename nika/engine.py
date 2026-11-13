@@ -11,8 +11,6 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from . import catalog, nlp
-from .care import Care
-from .knowledge import Knowledge
 from .persona import (
     AFTER_COMMAND_CHIPS,
     AFTER_EMPATHY_CHIPS,
@@ -23,6 +21,17 @@ from .persona import (
     Persona,
 )
 from .weather import Weather
+
+
+def _new_care(store):
+    """Забота подключается лениво: на старте не тянем лишние модули."""
+    from .care import Care
+    return Care(store)
+
+
+def _new_knowledge():
+    from .knowledge import Knowledge
+    return Knowledge()
 
 
 @dataclass
@@ -169,8 +178,18 @@ class Engine:
         self.s = store
         self.p = persona or Persona(store)
         self.w = weather or Weather()
-        self.care = care if care is not None else Care(store)
-        self.knowledge = knowledge if knowledge is not None else Knowledge()
+        self.care = care
+        if self.care is None:
+            try:
+                self.care = _new_care(store)
+            except BaseException:
+                self.care = None
+        self.knowledge = knowledge
+        if self.knowledge is None:
+            try:
+                self.knowledge = _new_knowledge()
+            except BaseException:
+                self.knowledge = None
         self.now = now or time.time
         self.status_cb = status_cb
         self.pending: Optional[Dict[str, Any]] = None
@@ -1344,6 +1363,8 @@ class Engine:
     #  «Что такое …» — короткий ответ из Википедии
     # ------------------------------------------------------------------
     def _h_knowledge(self, clean, t):
+        if self.knowledge is None:
+            return None
         m = WHAT_RE.match(t)
         if not m:
             return None
@@ -1566,6 +1587,8 @@ class Engine:
     #  Забота: включить-выключить и ответы на «ты поел?»
     # ------------------------------------------------------------------
     def _h_care_switch(self, clean, t):
+        if not self.care:
+            return None
         if any(w in t for w in _CARE_OFF):
             self.care.set_enabled(False)
             return Reply("ок, не буду отвлекать. если захочется — скажи "
@@ -1761,4 +1784,3 @@ class Engine:
             return Reply(self.p.absence((now - last) / 3600.0) + " как ты?",
                          chips=DEFAULT_CHIPS, intent="resume")
         return None
-
