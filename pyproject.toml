@@ -1,7 +1,7 @@
 [tool.briefcase]
 project_name = "Nika"
 bundle = "org.nikaassistant"
-version = "2.2.0"
+version = "2.3.0"
 url = "https://github.com/nika-assistant"
 license.file = "LICENSE"
 author = "Nika"
@@ -33,7 +33,6 @@ accent_color = "#c81e3a"
 splash_background_color = "#0d0d0f"
 
 # клавиатура поджимает окно: строка ввода остаётся над ней
-android_manifest_activity_attrs_extra_content = 'android:windowSoftInputMode="adjustResize"'
 
 # В Briefcase 0.3.2x permission — это словарь: имя разрешения -> атрибуты.
 # INTERNET и ACCESS_NETWORK_STATE добавляются автоматически.
@@ -63,4 +62,3 @@ requires = ["toga-gtk"]
 
 [tool.briefcase.app.nika.iOS]
 requires = ["toga-iOS"]
-
