@@ -697,6 +697,18 @@ class AndroidBridge(Bridge):
         except Exception:
             return Res(False, "")
 
+    def toast(self, text):
+        """Короткий тост — по нему видно, до какого шага дошёл запуск."""
+        def show():
+            try:
+                Toast = jclass("android.widget.Toast")
+                Toast.makeText(self._ctx, str(text), Toast.LENGTH_SHORT).show()
+            except Exception as exc:
+                self._emit("toast", exc)
+        if self._run_on_ui(show):
+            return Res(True, "")
+        return Res(False, "")
+
     # ------------------------------------------------------------------
     #  Голос
     # ------------------------------------------------------------------
