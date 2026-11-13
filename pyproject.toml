@@ -1,7 +1,7 @@
 [tool.briefcase]
 project_name = "Nika"
 bundle = "org.nikaassistant"
-version = "2.3.0"
+version = "2.5.0"
 url = "https://github.com/nika-assistant"
 license.file = "LICENSE"
 author = "Nika"
