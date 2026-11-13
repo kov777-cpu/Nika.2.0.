@@ -13,8 +13,11 @@ import functools
 import math
 import os
 import random
+import sys
 import textwrap
+import threading
 import time
+import traceback
 
 import toga
 from toga.style import Pack
@@ -95,7 +98,6 @@ class NikaApp(toga.App):
         self._wave_noise = []
         self._wave_canvas = None
         self._wave_inner = 0
-        self._hairlines = []
         self._pixel_ratio = 1.0
         self._voice_panel = None
         self._voice_caption = None
@@ -112,7 +114,32 @@ class NikaApp(toga.App):
         self._look_size = (0, 0)
         self._look_progress = 1.0
 
+        # диагностика запуска: если прошлый старт не дожил до конца — безопасный режим
+        self._safe_mode = False
+        self._data_dir = None
+        self._boot_file = None
+        self._log_file = None
+
     def startup(self):
+        self._boot_marker()
+        sys.excepthook = self._excepthook
+        self._log("boot start, safe=%s" % self._safe_mode)
+        try:
+            self._startup_inner()
+        except Exception:
+            details = traceback.format_exc()
+            self._log("startup crashed:\n" + details)
+            self._show_crash(details)
+            return
+        self._log("boot ok")
+        try:
+            timer = threading.Timer(8.0, self._clear_boot_marker)
+            timer.daemon = True
+            timer.start()
+        except Exception:
+            pass
+
+    def _startup_inner(self):
         self._prepare_data()
         try:
             self._pixel_ratio = float(self.bridge.pixel_ratio() or 1.0)
@@ -149,15 +176,104 @@ class NikaApp(toga.App):
         self._layout_width = self._content_width()
         self._columns = max(26, min(32, int(self._layout_width / 11)))
         self._care_since = time.time()
-        self._draw_hairlines()
         self._start_ticker()
         self._greet()
+
+        if self._safe_mode:
+            self._add_message(
+                "прошлый запуск не удался, поэтому включила безопасный режим: "
+                "волны и портрет будут проще. если всё в порядке — просто "
+                "перезапусти приложение.", False)
 
         # на Android 13+ без этого разрешения не будет уведомлений от таймеров
         if getattr(self.bridge, "is_android", False):
             try:
                 self.bridge.request_permissions(["POST_NOTIFICATIONS"],
                                                 lambda ok: None)
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    #  Диагностика запуска
+    # ------------------------------------------------------------------
+    def _boot_marker(self):
+        path = None
+        try:
+            data_dir = str(self.paths.data)
+            os.makedirs(data_dir, exist_ok=True)
+            self._data_dir = data_dir
+            path = os.path.join(data_dir, "nika_boot.flag")
+        except Exception:
+            pass
+        if not path:
+            base = os.path.join(os.path.expanduser("~"), ".nika")
+            self._data_dir = base
+            path = os.path.join(base, "nika_boot.flag")
+        self._boot_file = path
+        self._log_file = os.path.join(self._data_dir, "nika_error.log")
+        try:
+            if os.path.exists(path):
+                self._safe_mode = True
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(str(time.time()))
+        except Exception:
+            self._boot_file = None
+
+    def _clear_boot_marker(self):
+        try:
+            if self._boot_file and os.path.exists(self._boot_file):
+                os.remove(self._boot_file)
+        except Exception:
+            pass
+
+    def _log(self, text):
+        line = "%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text)
+        try:
+            print("[Nika] " + text)
+        except Exception:
+            pass
+        try:
+            if not self._log_file:
+                return
+            if os.path.exists(self._log_file) and \
+                    os.path.getsize(self._log_file) > 64 * 1024:
+                os.replace(self._log_file, self._log_file + ".old")
+            with open(self._log_file, "a", encoding="utf-8") as handle:
+                handle.write(line)
+        except Exception:
+            pass
+
+    def _excepthook(self, kind, value, tb):
+        details = "".join(traceback.format_exception(kind, value, tb))
+        self._log("unhandled:\n" + details)
+        try:
+            sys.__excepthook__(kind, value, tb)
+        except Exception:
+            pass
+
+    def _show_crash(self, details):
+        """Вместо молчаливого падения — экран с текстом ошибки."""
+        try:
+            if getattr(self, "main_window", None) is None:
+                self.main_window = toga.MainWindow(title="Nika")
+            box = toga.Box(style=_pack(direction="column",
+                                       background_color=theme.BG, padding=12))
+            box.add(toga.Label(
+                "запуск не удался",
+                style=_pack(color=theme.ACCENT, font_size=18, font_weight="bold")))
+            box.add(toga.Label(
+                details[-1100:],
+                style=_pack(color=theme.MUTED_LIGHT, font_size=11,
+                            width=self._content_width())))
+            box.add(toga.Label(
+                "лог: %s" % (self._log_file or "nika_error.log"),
+                style=_pack(color=theme.MUTED, font_size=10,
+                            width=self._content_width())))
+            self.main_window.content = box
+            self.main_window.show()
+        except Exception:
+            try:
+                print(details)
             except Exception:
                 pass
 
@@ -208,14 +324,16 @@ class NikaApp(toga.App):
     def _prepare_data(self):
         path = None
         try:
-            data_dir = self.paths.data
-            os.makedirs(str(data_dir), exist_ok=True)
-            path = os.path.join(str(data_dir), "nika_memory.json")
+            data_dir = str(self.paths.data)
+            os.makedirs(data_dir, exist_ok=True)
+            self._data_dir = data_dir
+            path = os.path.join(data_dir, "nika_memory.json")
         except Exception:
             pass
         if not path:
             base = os.path.join(os.path.expanduser("~"), ".nika")
             os.makedirs(base, exist_ok=True)
+            self._data_dir = base
             path = os.path.join(base, "nika_memory.json")
 
         self.store = Store(path)
@@ -321,9 +439,20 @@ class NikaApp(toga.App):
         self.body.add(self._input_row)
 
         # ---------- панель голосового ввода (появляется при прослушке) ------
-        self._voice_panel = self._build_voice_panel(width)
+        # собираем её лениво, при первом нажатии «мик.», чтобы при старте
+        # вообще не создавать Canvas — так запуск надёжнее на Android
+        self._voice_panel = None
 
         return self.root
+
+    def _ensure_voice_panel(self):
+        if self._voice_panel is not None:
+            return self._voice_panel
+        try:
+            self._voice_panel = self._build_voice_panel(self._layout_width or 340)
+        except Exception:
+            self._voice_panel = None
+        return self._voice_panel
 
     # ------------------------------------------------------------------
     #  Тонкие линии и волны
@@ -353,52 +482,14 @@ class NikaApp(toga.App):
         return line
 
     def _hairline(self, width, colors=None, seed=1):
-        """1px-линия на Canvas: на телефоне это ровно один пиксель экрана."""
-        canvas_class = getattr(toga, "Canvas", None)
-        if canvas_class is not None:
-            try:
-                canvas = canvas_class(style=_pack(width=int(max(1, width)),
-                                                  height=3))
-                self._hairlines.append((canvas, int(max(1, width)), seed, colors))
-                return canvas
-            except Exception:
-                pass
+        """Рваная линия толщиной 1 DIP.
+
+        Раньше рисовалась на Canvas ровно в 1 физический пиксель, но Canvas
+        на Android оказался слишком рискованным при старте: теперь линии —
+        обычные тонкие полоски, а Canvas используется только для волн и
+        портрета (и создаётся лениво).
+        """
         return self._glitch_line(width, colors=colors, seed=seed)
-
-    def _draw_hairlines(self):
-        for canvas, width, seed, colors in list(self._hairlines):
-            try:
-                self._draw_hairline(canvas, width, seed, colors)
-            except Exception:
-                pass
-
-    def _draw_hairline(self, canvas, width, seed, colors):
-        ratio = min(4.0, max(0.5, float(getattr(self, "_pixel_ratio", 1.0) or 1.0)))
-        width_px = int(width * ratio)
-        palette = colors or (theme.LINE, theme.LINE, theme.MUTED)
-        rnd = random.Random(seed)
-        y = 1
-        try:
-            actions = canvas.root_state.drawing_actions
-            actions.clear()
-            canvas.scale(1.0 / ratio, 1.0 / ratio)
-            canvas.begin_path()
-            x = 0
-            while x < width_px:
-                length = int(rnd.choice((4, 7, 11, 17, 25, 37)) * ratio)
-                canvas.rect(int(x), y, length, 1)
-                x += length + int(rnd.choice((2, 3, 5, 8, 13)) * ratio)
-            canvas.fill(color=palette[0])
-            # редкие акцентные обрывки — линия выглядит «глитчем»
-            canvas.begin_path()
-            for _ in range(max(2, width_px // int(90 * ratio))):
-                start = rnd.randrange(0, max(1, width_px - 10))
-                canvas.rect(int(start), y,
-                            int(rnd.choice((2, 3, 5, 8)) * ratio), 1)
-            canvas.fill(color=palette[-1])
-            canvas.redraw()
-        except Exception:
-            pass
 
     def _build_wave(self, width):
         """Полоса «волн»: каждая палка шириной ровно 1 пиксель.
@@ -414,7 +505,9 @@ class NikaApp(toga.App):
         self._wave_bars = []
         self._wave_noise = [random.uniform(0.35, 1.0) for _ in range(256)]
 
-        canvas_class = getattr(toga, "Canvas", None)
+        canvas_class = None
+        if not self._safe_mode:
+            canvas_class = getattr(toga, "Canvas", None)
         if canvas_class is not None:
             try:
                 canvas = canvas_class(style=_pack(width=inner,
@@ -461,7 +554,10 @@ class NikaApp(toga.App):
 
     def _show_voice_panel(self, visible):
         if self._voice_panel is None:
-            return
+            if not visible:
+                return
+            if self._ensure_voice_panel() is None:
+                return
         try:
             attached = self._voice_panel in self.body.children
         except Exception:
@@ -649,7 +745,9 @@ class NikaApp(toga.App):
     def _build_look_overlay(self):
         box = toga.Box(style=_pack(direction="column",
                                    background_color=theme.BG))
-        canvas_class = getattr(toga, "Canvas", None)
+        canvas_class = None
+        if not self._safe_mode:
+            canvas_class = getattr(toga, "Canvas", None)
         self._look_canvas = None
         if canvas_class is not None:
             try:
@@ -747,9 +845,10 @@ class NikaApp(toga.App):
                 self._draw_look()
                 await asyncio.sleep(0.05)
             self._look_progress = 1.0
+            # готовый портрет живёт: линии покачиваются, по фигуре идёт блик
             while self._look_open:
                 self._draw_look()
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.08)
         except asyncio.CancelledError:
             pass
         except Exception:
