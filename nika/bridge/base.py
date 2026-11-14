@@ -118,6 +118,10 @@ class Bridge:
         """Готовит окно к клавиатуре: поле ввода должно оставаться видимым."""
         return Res(False, "")
 
+    def watch_keyboard(self, callback: Callable[[int], None]) -> bool:
+        """Сообщает высоту клавиатуры в пикселях (0 — скрыта)."""
+        return False
+
     # ---------- голос ----------
     def apply_voice_profile(self, pitch: float, rate: float) -> Res:
         """Тон и скорость голоса (1.0 — обычный тон)."""
