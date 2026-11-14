@@ -321,6 +321,7 @@ class Engine:
             self._h_help,
             self._h_care_switch,
             self._h_care_answer,
+            self._h_game,
             self._h_social,
             self._h_facts,
             self._h_memory,
@@ -391,6 +392,10 @@ class Engine:
             reply.chips = DEFAULT_CHIPS
         reply.intent = reply.intent or intent
         self.last_intent = reply.intent
+        try:
+            self.p.last_line = reply.text
+        except Exception:
+            pass
         return reply
 
     # ------------------------------------------------------------------
@@ -727,6 +732,17 @@ class Engine:
             return None
         try:
             pitch, rate = self._voice_profile()
+            if any(w in t for w in ("женский голос", "голос алисы", "как у алисы",
+                                    "голос из интернета", "онлайн голос")):
+                self.s.set_pref("voice_online", True)
+                self.s.save()
+                try:
+                    self.b.set_voice_source(True)
+                except Exception:
+                    pass
+                return Reply("включила женский голос из интернета — он точно "
+                             "женский. если интернет пропадёт, вернусь к системному.",
+                             chips=["спасибо"])
             if any(w in t for w in _VOICE_RESET):
                 pitch, rate = self.apply_voice(1.16, 0.94)
                 return Reply("вернула обычный голос — мягкий и спокойный.",
@@ -1386,18 +1402,16 @@ class Engine:
             info = None
         if not info:
             if getattr(self.knowledge, "last_error", "") == "offline":
-                return Reply("не смогла достучаться до википедии — похоже, "
-                             "нет интернета.", chips=["поищи %s" % topic, "спасибо"])
+                return Reply("не смогла найти ответ — похоже, нет "
+                             "интернета.", chips=["поищи %s" % topic, "спасибо"])
             return Reply("не нашла короткого объяснения про «%s». открою поиск?"
                          % topic, chips=["поищи %s" % topic, "что ты умеешь"])
 
         text = info.get("text", "").strip()
         title = (info.get("title") or topic).strip()
-        source = "Википедия" if info.get("lang") == "ru" else "Wikipedia"
         if info.get("lang") != "ru":
             text = "нашла только по-английски. " + text
-        reply = "%s\n\n— %s, «%s»" % (text, source, title)
-        return Reply(reply, chips=["спасибо", "расскажи ещё"])
+        return Reply(text, chips=["спасибо", "расскажи ещё"])
 
     # ------------------------------------------------------------------
     #  Открыть приложение, сайт, файл
@@ -1632,6 +1646,18 @@ class Engine:
     # ------------------------------------------------------------------
     #  Социальное и болтовня
     # ------------------------------------------------------------------
+    def _h_game(self, clean, t):
+        """Игра «верю / не верю» и продолжение прошлой темы."""
+        try:
+            data = self.p.game_reply(clean, t)
+        except Exception as exc:
+            print("[Nika/engine] game: %s" % exc)
+            return None
+        if not data:
+            return None
+        return Reply(data.get("text", ""),
+                     chips=data.get("chips") or DEFAULT_CHIPS)
+
     def _h_social(self, clean, t):
         hour = time.localtime(self.now()).tm_hour
 
@@ -1713,6 +1739,8 @@ class Engine:
                 chips = AFTER_JOKE_CHIPS
             elif self.p.last_kind == "fact":
                 chips = AFTER_FACT_CHIPS
+            elif self.p.last_kind == "calm":
+                chips = ["спасибо", "расскажи анекдот", "включи музыку"]
             elif any(w in t for w in ("грустно", "плохо", "устал", "тревожно",
                                       "одиноко", "тяжело")):
                 chips = AFTER_EMPATHY_CHIPS
@@ -1744,7 +1772,7 @@ class Engine:
             unknown.append(nlp.strip_punct(clean))
             self.s.set("unknown", unknown[-200:])
 
-        return Reply(self.p.neutral_answer(), chips=DEFAULT_CHIPS)
+        return Reply(self.p.neutral_answer(clean), chips=DEFAULT_CHIPS)
 
     # ------------------------------------------------------------------
     #  Приветствие при запуске и «она сама пишет»
