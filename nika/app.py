@@ -151,6 +151,12 @@ class NikaApp(toga.App):
 
     def _startup_inner(self):
         self._prepare_data()
+        # если человек просил женский голос из интернета — включаем его сразу
+        try:
+            if self.store.pref("voice_online"):
+                self.bridge.set_voice_source(True)
+        except BaseException:
+            pass
         self._stage("1/4 данные и голос")
         try:
             self._pixel_ratio = float(self.bridge.pixel_ratio() or 1.0)
