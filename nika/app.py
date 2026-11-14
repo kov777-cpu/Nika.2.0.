@@ -13,9 +13,7 @@ import functools
 import math
 import os
 import random
-import sys
 import textwrap
-import threading
 import time
 import traceback
 
@@ -114,66 +112,24 @@ class NikaApp(toga.App):
         self._look_size = (0, 0)
         self._look_progress = 1.0
 
-        # диагностика запуска: если прошлый старт не дожил до конца — безопасный режим
         self._safe_mode = False
         self._data_dir = None
-        self._boot_file = None
-        self._log_file = None
 
     def startup(self):
-        self._boot_marker()
-        sys.excepthook = self._excepthook
-        self._log("boot start, safe=%s" % self._safe_mode)
         try:
             self._startup_inner()
         except BaseException:
-            details = traceback.format_exc()
-            self._log("startup crashed:\n" + details)
-            self._show_crash(details)
-            return
-        self._log("boot ok")
-        try:
-            timer = threading.Timer(8.0, self._clear_boot_marker)
-            timer.daemon = True
-            timer.start()
-        except BaseException:
-            pass
-
-    def _stage(self, text):
-        """Тост на экране: если приложение упадёт, видно, до какого шага дошло."""
-        self._log("stage: " + text)
-        try:
-            self.bridge.toast("Nika %s: %s" % (__version__, text))
-        except BaseException:
-            pass
+            self._show_crash(traceback.format_exc())
 
     def _startup_inner(self):
         self._prepare_data()
-        self._stage("1/4 данные и голос")
         try:
             self._pixel_ratio = float(self.bridge.pixel_ratio() or 1.0)
         except BaseException:
             self._pixel_ratio = 1.0
-        try:
-            pitch = self.store.pref("pitch")
-            rate = self.store.pref("rate")
-            if pitch is not None or rate is not None:
-                self.bridge.apply_voice_profile(
-                    float(pitch) if pitch is not None else 1.16,
-                    float(rate) if rate is not None else 0.94)
-        except BaseException:
-            pass
-        self._stage("2/4 интерфейс")
         self.main_window = toga.MainWindow(title="Nika")
-        try:
-            content = self._build_ui()
-        except BaseException:
-            self._log("build_ui crashed:\n" + traceback.format_exc())
-            self._safe_mode = True
-            content = self._build_ui_safe()
-        self.main_window.content = content
+        self.main_window.content = self._build_ui()
         self.main_window.show()
-        self._stage("3/4 окно")
 
         # системная шапка с названием приложения не нужна — только чат
         try:
@@ -190,21 +146,11 @@ class NikaApp(toga.App):
         except BaseException:
             pass
 
-        except BaseException:
-            pass
-
         self._layout_width = self._content_width()
         self._columns = max(26, min(32, int(self._layout_width / 11)))
         self._care_since = time.time()
         self._start_ticker()
         self._greet()
-        self._stage("4/4 готово")
-
-        if self._safe_mode:
-            self._add_message(
-                "прошлый запуск не удался, поэтому включила безопасный режим: "
-                "волны и портрет будут проще. если всё в порядке — просто "
-                "перезапусти приложение.", False)
 
         # на Android 13+ без этого разрешения не будет уведомлений от таймеров
         if getattr(self.bridge, "is_android", False):
@@ -213,64 +159,6 @@ class NikaApp(toga.App):
                                                 lambda ok: None)
             except BaseException:
                 pass
-
-    # ------------------------------------------------------------------
-    #  Диагностика запуска
-    # ------------------------------------------------------------------
-    def _boot_marker(self):
-        path = None
-        try:
-            data_dir = str(self.paths.data)
-            os.makedirs(data_dir, exist_ok=True)
-            self._data_dir = data_dir
-            path = os.path.join(data_dir, "nika_boot.flag")
-        except BaseException:
-            pass
-        if not path:
-            base = os.path.join(os.path.expanduser("~"), ".nika")
-            self._data_dir = base
-            path = os.path.join(base, "nika_boot.flag")
-        self._boot_file = path
-        self._log_file = os.path.join(self._data_dir, "nika_error.log")
-        try:
-            if os.path.exists(path):
-                self._safe_mode = True
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(str(time.time()))
-        except BaseException:
-            self._boot_file = None
-
-    def _clear_boot_marker(self):
-        try:
-            if self._boot_file and os.path.exists(self._boot_file):
-                os.remove(self._boot_file)
-        except BaseException:
-            pass
-
-    def _log(self, text):
-        line = "%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), text)
-        try:
-            print("[Nika] " + text)
-        except BaseException:
-            pass
-        try:
-            if not self._log_file:
-                return
-            if os.path.exists(self._log_file) and \
-                    os.path.getsize(self._log_file) > 64 * 1024:
-                os.replace(self._log_file, self._log_file + ".old")
-            with open(self._log_file, "a", encoding="utf-8") as handle:
-                handle.write(line)
-        except BaseException:
-            pass
-
-    def _excepthook(self, kind, value, tb):
-        details = "".join(traceback.format_exception(kind, value, tb))
-        self._log("unhandled:\n" + details)
-        try:
-            sys.__excepthook__(kind, value, tb)
-        except BaseException:
-            pass
 
     def _show_crash(self, details):
         """Вместо молчаливого падения — экран с текстом ошибки."""
@@ -281,14 +169,11 @@ class NikaApp(toga.App):
                                        background_color=theme.BG, padding=12))
             box.add(toga.Label(
                 "запуск не удался (Nika %s)" % __version__,
-                style=_pack(color=theme.ACCENT, font_size=18, font_weight="bold")))
+                style=_pack(color=theme.ACCENT, font_size=18,
+                            font_weight="bold")))
             box.add(toga.Label(
                 details[-1100:],
                 style=_pack(color=theme.MUTED_LIGHT, font_size=11,
-                            width=self._content_width())))
-            box.add(toga.Label(
-                "лог: %s" % (self._log_file or "nika_error.log"),
-                style=_pack(color=theme.MUTED, font_size=10,
                             width=self._content_width())))
             self.main_window.content = box
             self.main_window.show()
@@ -297,7 +182,13 @@ class NikaApp(toga.App):
                 print(details)
             except BaseException:
                 pass
-
+        try:
+            if getattr(self, "_data_dir", None):
+                with open(os.path.join(self._data_dir, "nika_error.log"),
+                          "a", encoding="utf-8") as handle:
+                    handle.write(details)
+        except BaseException:
+            pass
     def _content_width(self):
         """Ширина контента в DIP. На Android screen.size бывает в пикселях."""
         width = 360.0
@@ -401,11 +292,6 @@ class NikaApp(toga.App):
         header.add(help_button)
         self.body.add(header)
 
-        # тонкая линия под шапкой: самый простой виджет, без Canvas
-        self._top_line = toga.Box(style=_pack(width=width, height=1,
-                                              background_color=theme.LINE))
-        self.body.add(self._top_line)
-
         # ---------- полоса таймера (появляется при необходимости) ----------
         self._timer_row = toga.Box(style=_pack(direction="row", width=width,
                                                height=46, padding=(4, 8, 4, 8),
@@ -422,11 +308,9 @@ class NikaApp(toga.App):
 
         # ---------- лента сообщений ----------
         self.chat_box = toga.Box(style=_pack(direction="column", width=width,
-                                             background_color=theme.BG,
                                              padding=4))
         self.scroll = toga.ScrollContainer(horizontal=False, vertical=True,
-                                           style=_pack(flex=1,
-                                                       background_color=theme.BG))
+                                           style=_pack(flex=1))
         self.scroll.content = self.chat_box
         self.body.add(self.scroll)
 
@@ -434,10 +318,8 @@ class NikaApp(toga.App):
         self.chips_box = toga.Box(style=_pack(direction="row", width=width))
         self.chips_scroll = None
 
-        # линия над строкой ввода
-        self._bottom_line = toga.Box(style=_pack(width=width, height=1,
-                                                 background_color=theme.LINE))
-        self.body.add(self._bottom_line)
+        self._top_line = None
+        self._bottom_line = None
 
         # ---------- строка ввода ----------
         self._input_row = toga.Box(style=_pack(direction="row", width=width,
@@ -1383,9 +1265,7 @@ class NikaApp(toga.App):
         self._timer_shown = visible
         if visible:
             try:
-                # сразу под 1px-линией шапки, над лентой сообщений
-                self.body.insert(self._body_index(self._top_line) + 1,
-                                 self._timer_row)
+                self.body.insert(1, self._timer_row)
             except BaseException:
                 try:
                     self.body.add(self._timer_row)
