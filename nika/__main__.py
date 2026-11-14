@@ -4,7 +4,7 @@
 import os
 import traceback
 
-VERSION = "2.5.1"
+VERSION = "2.5.2"
 
 
 def _early_toast(text):
@@ -86,3 +86,4 @@ def main():
 
 if __name__ == "__main__":
     main().main_loop()
+
