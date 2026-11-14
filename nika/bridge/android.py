@@ -100,8 +100,7 @@ class AndroidBridge(Bridge):
         self._torch_id = None
         self._torch_on = False
         self._ringtone = None
-        if _JAVA and self._ctx is not None:
-            self._init_tts()
+        # TTS поднимаем лениво, при первом ответе — так старт приложения проще
 
     # ------------------------------------------------------------------
     #  Служебное
@@ -712,6 +711,19 @@ class AndroidBridge(Bridge):
     # ------------------------------------------------------------------
     #  Голос
     # ------------------------------------------------------------------
+    def _ensure_tts(self):
+        """TTS создаётся только когда реально нужно что-то сказать."""
+        if self._tts is not None:
+            return self._tts
+        if not (_JAVA and self._ctx is not None):
+            return None
+        try:
+            self._init_tts()
+        except BaseException as exc:
+            self._emit("tts", exc)
+            self._tts = None
+        return self._tts
+
     def _init_tts(self):
         try:
             TextToSpeech = jclass("android.speech.tts.TextToSpeech")
@@ -725,59 +737,56 @@ class AndroidBridge(Bridge):
                 def onInit(self, status):
                     try:
                         self.callback(status == 0)
-                    except Exception:
+                    except BaseException:
                         pass
 
             engine = None
             try:
-                self._ctx.getPackageManager().getPackageInfo("com.google.android.tts", 0)
+                self._ctx.getPackageManager().getPackageInfo(
+                    "com.google.android.tts", 0)
                 engine = "com.google.android.tts"
-            except Exception:
+            except BaseException:
                 engine = None
-            if engine:
-                try:
-                    self._tts = TextToSpeech(self._ctx, OnInit(self._on_tts_ready), engine)
-                except Exception:
+            try:
+                if engine:
+                    self._tts = TextToSpeech(self._ctx, OnInit(self._on_tts_ready),
+                                             engine)
+                else:
                     self._tts = TextToSpeech(self._ctx, OnInit(self._on_tts_ready))
-            else:
+            except BaseException:
                 self._tts = TextToSpeech(self._ctx, OnInit(self._on_tts_ready))
-        except Exception as exc:
+        except BaseException as exc:
             self._emit("tts", exc)
             self._tts = None
 
     def _on_tts_ready(self, ok):
-        self._tts_ready = bool(ok)
-        if not ok or self._tts is None:
-            return
-        self._apply_language()
         try:
-            AudioAttributes = jclass("android.media.AudioAttributes")
-            attributes = (AudioAttributes.Builder()
-                          .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                          .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                          .build())
-            self._tts.setAudioAttributes(attributes)
-        except Exception:
-            pass
-        self._configure_voice()
-        # список голосов иногда приходит с задержкой — пробуем ещё раз позже
-        try:
-            timer = threading.Timer(1.5, self._retry_voice)
-            timer.daemon = True
-            timer.start()
-        except Exception:
-            pass
-        pending = self._tts_pending
-        self._tts_pending = None
-        if pending:
-            self.speak(pending)
+            self._tts_ready = bool(ok)
+            if not ok or self._tts is None:
+                return
+            self._apply_language()
+            try:
+                AudioAttributes = jclass("android.media.AudioAttributes")
+                attributes = (AudioAttributes.Builder()
+                              .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                              .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                              .build())
+                self._tts.setAudioAttributes(attributes)
+            except BaseException:
+                pass
+            self._configure_voice()
+            pending = self._tts_pending
+            self._tts_pending = None
+            if pending:
+                self.speak(pending)
+        except BaseException as exc:
+            self._emit("tts_ready", exc)
 
     def _apply_language(self):
         """Ставит русский язык, пробуя пару вариантов локали."""
-        Locale = None
         try:
             Locale = jclass("java.util.Locale")
-        except Exception:
+        except BaseException:
             return False
         for args in (("ru", "RU"), ("ru", None)):
             try:
@@ -785,40 +794,26 @@ class AndroidBridge(Bridge):
                 status = int(self._tts.setLanguage(locale))
                 if status >= 0:      # LANG_MISSING_DATA = -1, LANG_NOT_SUPPORTED = -2
                     return True
-            except Exception as exc:
+            except BaseException as exc:
                 self._emit("tts_lang", exc)
         return False
 
-    def _retry_voice(self):
-        if self._voice_female:
-            return
-        try:
-            self._configure_voice()
-        except Exception:
-            pass
-
     def _configure_voice(self):
-        """Выбирает женский русский голос.
-
-        Android не отдаёт пол голоса отдельным полем, поэтому смотрим на имя
-        и признаки голоса, а если женского нет — поднимаем тон: мужской голос
-        с pitch 1.4 звучит женственно, а «переводчик» из настроек по умолчанию
-        так не звучит никогда.
-        """
+        """Подбирает женский голос аккуратно, только по именам голосов."""
         if self._tts is None:
             return
         female_marks = (
             "female", "жен", "ruf", "rua", "wavenet-a", "wavenet-c",
-            "standard-a", "standard-c", "neural-a", "neural-c", "zira",
-            "alena", "alyona", "milena", "katya", "tatiana", "tatyana",
-            "irina", "svetlana",
+            "standard-a", "standard-c", "neural-a", "neural-c", "alena",
+            "alyona", "milena", "katya", "tatiana", "tatyana", "irina",
+            "svetlana",
         )
         male_marks = (
             "male", "муж", "rur", "rud", "ru-m", "wavenet-b", "wavenet-d",
-            "standard-b", "standard-d", "neural-b", "neural-d", "pavel",
-            "dmitri", "dmitry", "yuri", "maxim",
+            "standard-b", "standard-d", "neural-b", "neural-d",
         )
-        candidates = []
+        chosen = None
+        chosen_female = False
         try:
             voices = self._tts.getVoices()
             iterator = voices.iterator() if voices is not None else None
@@ -826,82 +821,44 @@ class AndroidBridge(Bridge):
                 voice = iterator.next()
                 try:
                     language = str(voice.getLocale().getLanguage()).lower()
-                except Exception:
+                except BaseException:
                     continue
                 if language != "ru":
                     continue
-                name = ""
                 try:
                     name = str(voice.getName()).lower()
-                except Exception:
-                    pass
-                features = ""
-                try:
-                    feature_set = voice.getFeatures()
-                    if feature_set is not None:
-                        feature_iterator = feature_set.iterator()
-                        while feature_iterator.hasNext():
-                            features += str(feature_iterator.next()).lower() + " "
-                except Exception:
-                    pass
-                haystack = name + " " + features
-                female = ("female" in haystack) or ("жен" in haystack)
-                male = (not female) and (("male" in haystack) or ("муж" in haystack))
-                if not female and not male:
-                    female = any(mark in name for mark in female_marks)
-                    male = (not female) and any(mark in name for mark in male_marks)
-                score = 0
-                if female:
-                    score += 40
-                if male:
-                    score -= 40
-                if "ruf" in name:
-                    score += 12
-                if "rur" in name or "rud" in name:
-                    score -= 12
-                try:
-                    if voice.isNetworkConnectionRequired():
-                        score -= 2      # без интернета сетевой голос молчит
-                    else:
-                        score += 4
-                except Exception:
-                    pass
-                if "notinstalled" in features.replace(" ", ""):
-                    score -= 60
-                candidates.append((score, name, voice))
-        except Exception as exc:
-            self._emit("voice_choice", exc)
+                except BaseException:
+                    name = ""
+                female = any(mark in name for mark in female_marks)
+                male = any(mark in name for mark in male_marks)
+                if female and not male:
+                    chosen = voice
+                    chosen_female = True
+                    break
+                if chosen is None and not male:
+                    chosen = voice
+            if chosen is not None:
+                self._tts.setVoice(chosen)
+        except BaseException as exc:
+            self._emit("voice", exc)
 
-        # пробуем голоса по убыванию «женственности», пока какой-нибудь не встанет
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        applied = False
-        best_score = -999
-        for score, name, voice in candidates:
-            try:
-                self._tts.setVoice(voice)
-                applied = True
-                best_score = score
-                self._emit("voice", "выбран %s (score %s)" % (name, score))
-                break
-            except Exception as exc:
-                self._emit("voice_set", exc)
-
-        # уверенный женский голос не задираем, иначе — поднимаем тон
-        self._voice_female = applied and best_score >= 20
+        self._voice_female = bool(chosen is not None and chosen_female)
         pitch = self._pitch_override if self._pitch_override is not None else \
             (1.16 if self._voice_female else 1.45)
         rate = self._rate_override if self._rate_override is not None else 0.94
         try:
             self._tts.setPitch(pitch)
             self._tts.setSpeechRate(rate)
-        except Exception:
+        except BaseException:
             pass
         self._voice_tuned = True
 
     def speak(self, text):
         if not text:
             return Res(False, "")
-        if self._tts is None or not self._tts_ready:
+        if self._ensure_tts() is None:
+            return Res(False, "")
+        if not self._tts_ready:
             self._tts_pending = text
             return Res(False, "")
         try:
@@ -909,7 +866,7 @@ class AndroidBridge(Bridge):
                 self._configure_voice()
             self._tts.speak(text, 0, None, "nika-%d" % int(time.time() * 1000))
             return Res(True, "")
-        except Exception as exc:
+        except BaseException as exc:
             self._emit("speak", exc)
             return Res(False, "")
 
@@ -919,7 +876,7 @@ class AndroidBridge(Bridge):
             if self._tts is not None:
                 self._tts.stop()
             return Res(True, "")
-        except Exception:
+        except BaseException:
             return Res(False, "")
 
     def _run_on_ui(self, function):
