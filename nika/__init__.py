@@ -1,33 +1,37 @@
 # -*- coding: utf-8 -*-
-"""Nika для Android: ядро без UI.
+"""Выбор моста: Android (BeeWare/Chaquopy), если мы на телефоне, иначе — настольный."""
 
-    from nika import Engine, Store
-    engine = Engine(bridge, Store("nika.json"))
-    reply = engine.respond("позвони маме")
-"""
+import os
 
-__version__ = "2.5.1"
+from .base import Bridge, Contact, Res
 
-# Импорт ядра обёрнут: `python -m nika` сначала выполняет этот файл, и раньше
-# любой сбой (например, файл модуля не попал в APK) убивал приложение ещё до
-# того, как срабатывал обработчик ошибок в __main__.py — на телефоне это
-# выглядело как «заставка на секунду и вылет». Теперь сбой запоминается, а
-# понятная ошибка доходит до экрана «запуск не удался».
-_FAILED_IMPORT = ""
 
-try:
-    from .engine import Engine, Reply
-    from .persona import Persona
-    from .store import Store
-    from .weather import Weather
-except Exception:  # noqa: BLE001 — показать причину, а не молча умереть
-    import traceback as _traceback
+def _android_available():
+    """Android в Briefcase определяется наличием Chaquopy-моста `java`."""
+    if "ANDROID_ARGUMENT" in os.environ:
+        return True
+    try:
+        from java import jclass
+        jclass("android.os.Build")
+        return True
+    except Exception:
+        return False
 
-    _FAILED_IMPORT = _traceback.format_exc()
 
-    def __getattr__(name):
-        if name in ("Engine", "Reply", "Persona", "Store", "Weather"):
-            raise ImportError("не загрузилось ядро Nika:\n" + _FAILED_IMPORT)
-        raise AttributeError(name)
+def get_bridge(verbose=False):
+    """Возвращает (bridge, note). note — почему не Android, если так вышло."""
+    note = ""
+    if _android_available():
+        try:
+            from .android import AndroidBridge
+            bridge = AndroidBridge()
+            if bridge.ready():
+                return bridge, ""
+            note = "android-мост не инициализировался"
+        except Exception as exc:  # noqa: BLE001
+            note = "android-мост недоступен: %s" % exc
+            if verbose:
+                print("[Nika]", note)
 
-__all__ = ["Engine", "Reply", "Persona", "Store", "Weather", "__version__"]
+    from .desktop import DesktopBridge
+    return DesktopBridge(), note
